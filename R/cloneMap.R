@@ -5,6 +5,49 @@
 # Cell Fraction (CCF) of each clone                                #
 #==================================================================#
 
+raster_to_sf_polygons <- function(raster_obj, predicate){
+
+  values <- raster::values(raster_obj)
+  selected <- predicate(values)
+  selected[is.na(selected)] <- FALSE
+
+  if( !any(selected) ){
+    empty_geom <- sf::st_sfc( sf::st_geometrycollection(), crs = NA )
+    return( sf::st_sf( geometry = empty_geom ) )
+  }
+
+  cells <- which(selected)
+  coords <- raster::xyFromCell( raster_obj, cells )
+  resolution <- raster::res( raster_obj )
+  half_x <- resolution[1] / 2
+  half_y <- resolution[2] / 2
+
+  polygons <- lapply( seq_len( nrow(coords) ), function(i){
+    x <- coords[i, 1]
+    y <- coords[i, 2]
+    ring <- matrix( c( x - half_x, y - half_y,
+                       x + half_x, y - half_y,
+                       x + half_x, y + half_y,
+                       x - half_x, y + half_y,
+                       x - half_x, y - half_y ),
+                     ncol = 2,
+                     byrow = TRUE )
+    sf::st_polygon( list( ring ) )
+  })
+
+  geometry <- sf::st_sfc( polygons, crs = NA )
+  sf_obj <- sf::st_sf( value = values[cells], geometry = geometry )
+  sf::st_agr( sf_obj ) <- "constant"
+
+  unioned <- sf::st_union( sf_obj )
+  if( any( sf::st_geometry_type( unioned ) == "GEOMETRYCOLLECTION" ) ){
+    unioned <- sf::st_collection_extract( unioned, "POLYGON" )
+  }
+
+  return( sf::st_sf( geometry = unioned ) )
+
+}
+
 #####################
 ### Main Function ###
 #####################
@@ -386,9 +429,9 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
         rasterPlot <- raster::raster( clones_rasterised_plot )
         
         #set up plot extent
-        raster::plot( raster::rasterToPolygons( rasterPlot ), col = NA, border = NA) 
-        
-        plot <- suppressMessages( sf::st_as_sf( raster::rasterToPolygons( rasterPlot, function(x){x == 1000}, dissolve = TRUE) ) )
+        plot(raster_to_sf_polygons( rasterPlot, function(x) rep(TRUE, length(x)) ), col = NA, border = NA, axes = FALSE, asp = 1)
+
+        plot <- raster_to_sf_polygons( rasterPlot, function(x){x == 1000} )
         
         # add smoothing to make it more visually appealing #
         # note: smoothing will make the plotted area slightly underestimate the true area but by only very little #
@@ -397,7 +440,7 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
         plot.smooth <- smoothr::smooth(plot, method = "ksmooth", smoothness= smoothing.par.plot)
         
         # specify border thickness & colour in arguments - default is 1.5 & grey #
-        raster::plot( plot.smooth, col = 'white', border = border.colour, lwd = border.thickness, add = TRUE ) 
+        plot( plot.smooth, col = 'white', border = border.colour, lwd = border.thickness, add = TRUE )
        
       }
       
@@ -580,8 +623,8 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
       rasterPlot <- raster::raster( clones_rasterised_plot )
       
       # set up plot extent #
-      if( tissue_border == FALSE ) raster::plot( raster::rasterToPolygons( rasterPlot ), col = NA, border = NA) 
-      
+      if( tissue_border == FALSE ) plot( raster_to_sf_polygons( rasterPlot, function(x) rep(TRUE, length(x)) ), col = NA, border = NA, axes = FALSE, asp = 1)
+
       for( root.clone in root){
       
         # adjust the smoothing parameter depending on clone size
@@ -592,8 +635,7 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
         smoothing.par.plot <- smoothing.par * clone_radius_fraction
         
       ## plot the clonal clone(s) ##
-      # message suppressed for rgeos package loading #
-      plot <- suppressMessages( sf::st_as_sf( raster::rasterToPolygons( rasterPlot, function(x){x == root.clone}, dissolve = TRUE) ) )
+      plot <- raster_to_sf_polygons( rasterPlot, function(x){x == root.clone} )
       
       # add smoothing to make it more visually appealing #
       # note: smoothing will make the plotted area slightly underestimate the true area but by only very little #
@@ -602,7 +644,7 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
       plot.smooth <- smoothr::smooth(plot, method = "ksmooth", smoothness= smoothing.par.plot)
       
       # specify border thickness & colour in arguments - default is 1.5 & grey #
-      raster::plot( plot.smooth, col = clone.cols[ names( clone.cols ) == root.clone ], border = border.colour, lwd = border.thickness, add = TRUE ) 
+      plot( plot.smooth, col = clone.cols[ names( clone.cols ) == root.clone ], border = border.colour, lwd = border.thickness, add = TRUE )
       
       }
     }
@@ -962,9 +1004,9 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
           # convert to class raster #
           rasterPlot <- raster::raster( clones_rasterised_plot )
           
-          plot <- sf::st_as_sf( raster::rasterToPolygons( rasterPlot, function(x){ x == clone }, dissolve = TRUE) )
+          plot <- raster_to_sf_polygons( rasterPlot, function(x){ x == clone } )
           plot.smooth <- smoothr::smooth(plot, method = "ksmooth", smoothness = smoothing.par.plot) # smoothing par specified in arguemnts
-          raster::plot( plot.smooth, col = clone.cols[ names(clone.cols) == clone], border = border.colour, lwd = border.thickness, add = TRUE ) # border thickness specified in arguemnts and col can be specified in arguments
+          plot( plot.smooth, col = clone.cols[ names(clone.cols) == clone], border = border.colour, lwd = border.thickness, add = TRUE ) # border thickness specified in arguemnts and col can be specified in arguments
           
         }
         
@@ -1028,8 +1070,8 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
     clones_rasterised_blank <- clones_rasterised
     clones_rasterised_blank[] <- 0 
     clones_rasterised_blank <- apply( clones_rasterised_blank, 1, as.numeric )
-    blank.plot <- raster::rasterToPolygons( raster::raster( clones_rasterised_blank ) )
-    raster::plot( blank.plot, col = NA, border = NA ) # set up plot extent
+    blank.plot <- raster_to_sf_polygons( raster::raster( clones_rasterised_blank ), function(x) rep(TRUE, length(x)) )
+    plot( blank.plot, col = NA, border = NA, axes = FALSE, asp = 1 ) # set up plot extent
     
     # signpost #
     message( paste0( "        ", "plotting clones..." ) )
@@ -1072,9 +1114,9 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
       rasterPlot <- raster::raster(clones_rasterised_plot)
       
       # plot the clone #
-      plot <- sf::st_as_sf( raster::rasterToPolygons( rasterPlot, function(x){x == clone}, dissolve = TRUE))
+      plot <- raster_to_sf_polygons( rasterPlot, function(x){x == clone} )
       plot.smooth <- smoothr::smooth(plot, method = "ksmooth", smoothness= smoothing.par.plot) # smoothing par specified in arguments
-      raster::plot(plot.smooth, col = clone.cols[ names(clone.cols) == clone ], border = border.colour, lwd = border.thickness, add = TRUE) # border thickness specified in arguments and colour can be specified in arguments
+      plot(plot.smooth, col = clone.cols[ names(clone.cols) == clone ], border = border.colour, lwd = border.thickness, add = TRUE) # border thickness specified in arguments and colour can be specified in arguments
       
     }
     

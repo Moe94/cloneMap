@@ -9,19 +9,10 @@ A function to map the distribution of somatic clones in sample or set of samples
 
 ## Installation & loading
 
-Unfortunately the R package Rgeos which is required for cloneMaps has been archieved on CRAN. Therefore install geos using homebrew and install the R package using R-Forge:
-
-```
-brew install geos
-```
-```R
-install.packages("rgeos", repos="http://R-Forge.R-project.org", type="source”)
-```
-
-You can then use devtools::install_github() to install cloneMap from this repository:
+You can install cloneMap directly from this repository using devtools::install_github():
 
 ```R
-devtools::install_github("amf71/cloneMap")`
+devtools::install_github("amf71/cloneMap")
 ```
 
 load package:
