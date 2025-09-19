@@ -11,8 +11,18 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
   selected <- predicate(values)
   selected[is.na(selected)] <- FALSE
 
+  raster_crs_text <- tryCatch({
+    raster::crs(raster_obj, asText = TRUE)
+  }, error = function(e) "")
+  crs <- if( is.null(raster_crs_text) || raster_crs_text == "" ){
+    sf::NA_crs_
+  }else{
+    sf::st_crs(raster_crs_text)
+  }
+
   if( !any(selected) ){
-    empty_geom <- sf::st_sfc( sf::st_geometrycollection(), crs = NA )
+    empty_geom <- sf::st_sfc( sf::st_geometrycollection(), crs = crs )
+
     return( sf::st_sf( geometry = empty_geom ) )
   }
 
@@ -35,11 +45,17 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
     sf::st_polygon( list( ring ) )
   })
 
-  geometry <- sf::st_sfc( polygons, crs = NA )
+
+  geometry <- sf::st_sfc( polygons, crs = crs )
+
   sf_obj <- sf::st_sf( value = values[cells], geometry = geometry )
   sf::st_agr( sf_obj ) <- "constant"
 
   unioned <- sf::st_union( sf_obj )
+
+  if( inherits(unioned, "sfc") ){
+    unioned <- sf::st_sf( geometry = unioned )
+  }
   if( any( sf::st_geometry_type( unioned ) == "GEOMETRYCOLLECTION" ) ){
     unioned <- sf::st_collection_extract( unioned, "POLYGON" )
   }
