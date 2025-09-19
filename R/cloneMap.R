@@ -14,14 +14,22 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
   raster_crs_text <- tryCatch({
     raster::crs(raster_obj, asText = TRUE)
   }, error = function(e) "")
-  crs <- if( is.null(raster_crs_text) || raster_crs_text == "" ){
-    sf::NA_crs_
+
+  crs <- if( is.null(raster_crs_text) || isTRUE(raster_crs_text == "") ){
+    NULL
   }else{
     sf::st_crs(raster_crs_text)
   }
 
+  assign_crs <- function(geometry){
+    if( !is.null(crs) ){
+      sf::st_crs(geometry) <- crs
+    }
+    geometry
+  }
+
   if( !any(selected) ){
-    empty_geom <- sf::st_sfc( sf::st_geometrycollection(), crs = crs )
+    empty_geom <- assign_crs( sf::st_sfc( sf::st_geometrycollection() ) )
 
     return( sf::st_sf( geometry = empty_geom ) )
   }
@@ -44,9 +52,7 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
                      byrow = TRUE )
     sf::st_polygon( list( ring ) )
   })
-
-
-  geometry <- sf::st_sfc( polygons, crs = crs )
+  geometry <- assign_crs( sf::st_sfc( polygons ) )
 
   sf_obj <- sf::st_sf( value = values[cells], geometry = geometry )
   sf::st_agr( sf_obj ) <- "constant"
@@ -60,7 +66,29 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
     unioned <- sf::st_collection_extract( unioned, "POLYGON" )
   }
 
-  return( sf::st_sf( geometry = unioned ) )
+  if( nrow(unioned) > 0 ){
+    geom <- sf::st_geometry( unioned )
+    parts <- sf::st_cast( geom, "POLYGON", warn = FALSE )
+
+    if( length(parts) > 1 ){
+      areas <- sf::st_area( parts )
+      max_area <- max( areas )
+      keep <- as.numeric( areas ) >= as.numeric( max_area ) * 1e-3
+
+      if( !all( keep ) ){
+        kept_parts <- parts[ keep ]
+        cleaned <- sf::st_union( sf::st_sf( geometry = kept_parts ) )
+
+        if( inherits( cleaned, "sfc" ) ){
+          unioned <- sf::st_sf( geometry = cleaned )
+        }else{
+          unioned <- cleaned
+        }
+      }
+    }
+  }
+
+  return( unioned )
 
 }
 
