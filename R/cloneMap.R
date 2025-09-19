@@ -66,7 +66,29 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
     unioned <- sf::st_collection_extract( unioned, "POLYGON" )
   }
 
-  return( sf::st_sf( geometry = unioned ) )
+  if( nrow(unioned) > 0 ){
+    geom <- sf::st_geometry( unioned )
+    parts <- sf::st_cast( geom, "POLYGON", warn = FALSE )
+
+    if( length(parts) > 1 ){
+      areas <- sf::st_area( parts )
+      max_area <- max( areas )
+      keep <- as.numeric( areas ) >= as.numeric( max_area ) * 1e-3
+
+      if( !all( keep ) ){
+        kept_parts <- parts[ keep ]
+        cleaned <- sf::st_union( sf::st_sf( geometry = kept_parts ) )
+
+        if( inherits( cleaned, "sfc" ) ){
+          unioned <- sf::st_sf( geometry = cleaned )
+        }else{
+          unioned <- cleaned
+        }
+      }
+    }
+  }
+
+  return( unioned )
 
 }
 
