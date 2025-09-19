@@ -22,6 +22,7 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
 
   if( !any(selected) ){
     empty_geom <- sf::st_sfc( sf::st_geometrycollection(), crs = crs )
+
     return( sf::st_sf( geometry = empty_geom ) )
   }
 
@@ -44,11 +45,14 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
     sf::st_polygon( list( ring ) )
   })
 
+
   geometry <- sf::st_sfc( polygons, crs = crs )
+
   sf_obj <- sf::st_sf( value = values[cells], geometry = geometry )
   sf::st_agr( sf_obj ) <- "constant"
 
   unioned <- sf::st_union( sf_obj )
+
   if( inherits(unioned, "sfc") ){
     unioned <- sf::st_sf( geometry = unioned )
   }
