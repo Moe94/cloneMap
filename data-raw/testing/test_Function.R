@@ -9,7 +9,6 @@ library(sf)
 library(smoothr)
 library(raster)
 library(RColorBrewer)
-library(rgeos)
 library(grDevices)
 library(vegan)
 
