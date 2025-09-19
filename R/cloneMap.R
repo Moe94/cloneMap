@@ -127,7 +127,6 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
       }
     }
   }
-
   unioned <- retain_primary_component( unioned )
 
   return( unioned )
