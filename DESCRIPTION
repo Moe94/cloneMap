@@ -19,9 +19,8 @@ Imports:
 	sf,
 	smoothr,
 	raster,
-	RColorBrewer,
-	rgeos,
-	grDevices,
+        RColorBrewer,
+        grDevices,
 	vegan
 RoxygenNote: 7.1.1
 URL: https://github.com/amf71/cloneMap
