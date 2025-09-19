@@ -8,13 +8,19 @@
 
 retain_primary_component <- function(geometry){
 
-  if( inherits(geometry, "sf") ){
+
+  if( !inherits( geometry, c( "sf", "sfc" ) ) ){
+    return( geometry )
+  }
+
+  as_sf <- inherits( geometry, "sf" )
+  if( as_sf ){
     data <- geometry
-  }else{
+  } else {
     data <- sf::st_sf( geometry = geometry )
   }
 
-  if( nrow(data) == 0 ){
+  if( nrow( data ) == 0 ){
     return( geometry )
   }
 
@@ -23,24 +29,48 @@ retain_primary_component <- function(geometry){
   })
 
   geom <- sf::st_geometry( data )
-  polygons <- sf::st_collection_extract( geom, "POLYGON", warn = FALSE )
+  crs <- sf::st_crs( geom )
 
-  if( length( polygons ) == 0 ){
-    return( geometry )
+  cleaned <- vector( "list", length( geom ) )
+
+  for( i in seq_along( geom ) ){
+
+    current_geom <- geom[ i ]
+    current_types <- unique( sf::st_geometry_type( current_geom, by_geometry = TRUE ) )
+
+    if( !any( current_types %in% c( "POLYGON", "MULTIPOLYGON", "GEOMETRYCOLLECTION" ) ) ){
+      cleaned[[ i ]] <- current_geom
+      next
+    }
+
+    if( any( current_types == "GEOMETRYCOLLECTION" ) ){
+      current_geom <- sf::st_collection_extract( current_geom, "POLYGON", warn = FALSE )
+    }
+
+    current_geom <- sf::st_cast( current_geom, "MULTIPOLYGON", warn = FALSE )
+    current_geom <- sf::st_cast( current_geom, "POLYGON", warn = FALSE )
+
+    if( length( current_geom ) == 0 ){
+      cleaned[[ i ]] <- sf::st_sfc( sf::st_geometrycollection(), crs = crs )
+      next
+    }
+
+    if( length( current_geom ) > 1 ){
+      areas <- sf::st_area( current_geom )
+      keep <- which.max( as.numeric( areas ) )
+      current_geom <- current_geom[ keep ]
+    }
+
+    cleaned[[ i ]] <- current_geom
   }
 
-  if( length( polygons ) > 1 ){
-    areas <- sf::st_area( polygons )
-    polygons <- polygons[ which.max( as.numeric( areas ) ) ]
-  }
+  new_geom <- do.call( c, cleaned )
+  sf::st_geometry( data ) <- new_geom
 
-  result <- data[ rep(1, length(polygons)), , drop = FALSE ]
-  sf::st_geometry( result ) <- polygons
-
-  if( inherits( geometry, "sf" ) ){
-    return( result )
-  }else{
-    return( sf::st_geometry( result ) )
+  if( as_sf ){
+    return( data )
+  } else {
+    return( sf::st_geometry( data ) )
   }
 }
 
@@ -66,6 +96,30 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
       sf::st_crs(geometry) <- crs
     }
     geometry
+  }
+
+  if( any( selected ) ){
+
+    selected_raster <- raster::raster( raster_obj )
+    raster::values( selected_raster ) <- NA_integer_
+    raster::values( selected_raster )[ selected ] <- 1L
+
+    patches <- tryCatch({
+      raster::clump( selected_raster, directions = 8, gaps = FALSE )
+    }, error = function(e) NULL )
+
+    if( !is.null( patches ) ){
+      patch_values <- raster::values( patches )
+      patch_ids <- patch_values[ !is.na( patch_values ) ]
+
+      if( length( patch_ids ) > 0 ){
+        keep_id <- as.integer( names( which.max( table( patch_ids ) ) ) )
+        selected <- patch_values == keep_id
+        selected[ is.na( selected ) ] <- FALSE
+      } else {
+        selected[] <- FALSE
+      }
+    }
   }
 
   if( !any(selected) ){
@@ -128,7 +182,6 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
     }
   }
   unioned <- retain_primary_component( unioned )
-
   return( unioned )
 
 }
