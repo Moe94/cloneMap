@@ -5,6 +5,75 @@
 # Cell Fraction (CCF) of each clone                                #
 #==================================================================#
 
+
+retain_primary_component <- function(geometry){
+
+  if( !inherits( geometry, c( "sf", "sfc" ) ) ){
+    return( geometry )
+  }
+
+  as_sf <- inherits( geometry, "sf" )
+  if( as_sf ){
+    data <- geometry
+  } else {
+    data <- sf::st_sf( geometry = geometry )
+  }
+
+  if( nrow( data ) == 0 ){
+    return( geometry )
+  }
+
+  suppressWarnings({
+    data <- sf::st_make_valid( data )
+  })
+
+  geom <- sf::st_geometry( data )
+  crs <- sf::st_crs( geom )
+
+  cleaned <- vector( "list", length( geom ) )
+
+  for( i in seq_along( geom ) ){
+
+    current_geom <- geom[ i ]
+    current_types <- unique( sf::st_geometry_type( current_geom, by_geometry = TRUE ) )
+
+    if( !any( current_types %in% c( "POLYGON", "MULTIPOLYGON", "GEOMETRYCOLLECTION" ) ) ){
+      cleaned[[ i ]] <- current_geom
+      next
+    }
+
+    if( any( current_types == "GEOMETRYCOLLECTION" ) ){
+      current_geom <- sf::st_collection_extract( current_geom, "POLYGON", warn = FALSE )
+    }
+
+    current_geom <- sf::st_cast( current_geom, "MULTIPOLYGON", warn = FALSE )
+    current_geom <- sf::st_cast( current_geom, "POLYGON", warn = FALSE )
+
+    if( length( current_geom ) == 0 ){
+      cleaned[[ i ]] <- sf::st_sfc( sf::st_geometrycollection(), crs = crs )
+      next
+    }
+
+    if( length( current_geom ) > 1 ){
+      areas <- sf::st_area( current_geom )
+      keep <- which.max( as.numeric( areas ) )
+      current_geom <- current_geom[ keep ]
+    }
+
+    cleaned[[ i ]] <- current_geom
+  }
+
+  new_geom <- do.call( c, cleaned )
+  sf::st_geometry( data ) <- new_geom
+
+  if( as_sf ){
+    return( data )
+  } else {
+    return( sf::st_geometry( data ) )
+  }
+}
+
+
 raster_to_sf_polygons <- function(raster_obj, predicate){
 
   values <- raster::values(raster_obj)
@@ -14,14 +83,46 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
   raster_crs_text <- tryCatch({
     raster::crs(raster_obj, asText = TRUE)
   }, error = function(e) "")
-  crs <- if( is.null(raster_crs_text) || raster_crs_text == "" ){
-    sf::NA_crs_
+
+  crs <- if( is.null(raster_crs_text) || isTRUE(raster_crs_text == "") ){
+    NULL
   }else{
     sf::st_crs(raster_crs_text)
   }
 
+  assign_crs <- function(geometry){
+    if( !is.null(crs) ){
+      sf::st_crs(geometry) <- crs
+    }
+    geometry
+  }
+
+  if( any( selected ) ){
+
+    selected_raster <- raster::raster( raster_obj )
+    raster::values( selected_raster ) <- NA_integer_
+    raster::values( selected_raster )[ selected ] <- 1L
+
+    patches <- tryCatch({
+      raster::clump( selected_raster, directions = 8, gaps = FALSE )
+    }, error = function(e) NULL )
+
+    if( !is.null( patches ) ){
+      patch_values <- raster::values( patches )
+      patch_ids <- patch_values[ !is.na( patch_values ) ]
+
+      if( length( patch_ids ) > 0 ){
+        keep_id <- as.integer( names( which.max( table( patch_ids ) ) ) )
+        selected <- patch_values == keep_id
+        selected[ is.na( selected ) ] <- FALSE
+      } else {
+        selected[] <- FALSE
+      }
+    }
+  }
+
   if( !any(selected) ){
-    empty_geom <- sf::st_sfc( sf::st_geometrycollection(), crs = crs )
+    empty_geom <- assign_crs( sf::st_sfc( sf::st_geometrycollection() ) )
 
     return( sf::st_sf( geometry = empty_geom ) )
   }
@@ -44,9 +145,7 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
                      byrow = TRUE )
     sf::st_polygon( list( ring ) )
   })
-
-
-  geometry <- sf::st_sfc( polygons, crs = crs )
+  geometry <- assign_crs( sf::st_sfc( polygons ) )
 
   sf_obj <- sf::st_sf( value = values[cells], geometry = geometry )
   sf::st_agr( sf_obj ) <- "constant"
@@ -60,7 +159,31 @@ raster_to_sf_polygons <- function(raster_obj, predicate){
     unioned <- sf::st_collection_extract( unioned, "POLYGON" )
   }
 
-  return( sf::st_sf( geometry = unioned ) )
+  if( nrow(unioned) > 0 ){
+    geom <- sf::st_geometry( unioned )
+    parts <- sf::st_cast( geom, "POLYGON", warn = FALSE )
+
+    if( length(parts) > 1 ){
+      areas <- sf::st_area( parts )
+      max_area <- max( areas )
+      keep <- as.numeric( areas ) >= as.numeric( max_area ) * 1e-3
+
+      if( !all( keep ) ){
+        kept_parts <- parts[ keep ]
+        cleaned <- sf::st_union( sf::st_sf( geometry = kept_parts ) )
+
+        if( inherits( cleaned, "sfc" ) ){
+          unioned <- sf::st_sf( geometry = cleaned )
+        }else{
+          unioned <- cleaned
+        }
+      }
+    }
+  }
+
+  unioned <- retain_primary_component( unioned )
+
+  return( unioned )
 
 }
 
@@ -454,6 +577,7 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
         # also has the advantage that you can see parent clones below at smooth edges and it becomes easier too   #
         # see tree relationships                                                                                  #
         plot.smooth <- smoothr::smooth(plot, method = "ksmooth", smoothness= smoothing.par.plot)
+        plot.smooth <- retain_primary_component( plot.smooth )
         
         # specify border thickness & colour in arguments - default is 1.5 & grey #
         plot( plot.smooth, col = 'white', border = border.colour, lwd = border.thickness, add = TRUE )
@@ -658,6 +782,7 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
       # also has the advantage that you can see parent clones below at smooth edges and it becomes easier too   #
       # see tree relationships                                                                                  #
       plot.smooth <- smoothr::smooth(plot, method = "ksmooth", smoothness= smoothing.par.plot)
+      plot.smooth <- retain_primary_component( plot.smooth )
       
       # specify border thickness & colour in arguments - default is 1.5 & grey #
       plot( plot.smooth, col = clone.cols[ names( clone.cols ) == root.clone ], border = border.colour, lwd = border.thickness, add = TRUE )
@@ -1022,6 +1147,7 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
           
           plot <- raster_to_sf_polygons( rasterPlot, function(x){ x == clone } )
           plot.smooth <- smoothr::smooth(plot, method = "ksmooth", smoothness = smoothing.par.plot) # smoothing par specified in arguemnts
+          plot.smooth <- retain_primary_component( plot.smooth )
           plot( plot.smooth, col = clone.cols[ names(clone.cols) == clone], border = border.colour, lwd = border.thickness, add = TRUE ) # border thickness specified in arguemnts and col can be specified in arguments
           
         }
@@ -1132,6 +1258,7 @@ cloneMap <- function( tree.mat = NA, CCF.data = NA, clone_map = NA, output.Clone
       # plot the clone #
       plot <- raster_to_sf_polygons( rasterPlot, function(x){x == clone} )
       plot.smooth <- smoothr::smooth(plot, method = "ksmooth", smoothness= smoothing.par.plot) # smoothing par specified in arguments
+      plot.smooth <- retain_primary_component( plot.smooth )
       plot(plot.smooth, col = clone.cols[ names(clone.cols) == clone ], border = border.colour, lwd = border.thickness, add = TRUE) # border thickness specified in arguments and colour can be specified in arguments
       
     }
